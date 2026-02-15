@@ -37,7 +37,7 @@ jobs:
           - runner: ubuntu-22.04
             target: ppc64le
     env:
-      V8_GN_ARGS: "use_static_tls=false"
+      V8_GN_ARGS: "is_component_build=true"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -71,7 +71,7 @@ jobs:
             target: armv7
     env:
       RUSTY_V8_MIRROR: $HOME/.cache/rusty_v8
-      V8_GN_ARGS: "use_static_tls=false"
+      V8_GN_ARGS: "is_component_build=true"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6

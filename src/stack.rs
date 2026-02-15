@@ -39,10 +39,15 @@ impl ArcStack {
     pub fn push(&mut self, item: ArcStackItem) {
         self.items.push(item);
     }
+
+    #[inline(always)]
+    pub fn drop_all(&mut self) {
+        self.items.drain(..).for_each(|item| item.drop_inner())
+    }
 }
 
 impl Drop for ArcStack {
     fn drop(&mut self) {
-        self.items.drain(..).for_each(|item| item.drop_inner())
+        self.drop_all();
     }
 }

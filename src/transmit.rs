@@ -1,7 +1,8 @@
 use std::{
     ffi::c_void,
+    mem,
     ptr::NonNull,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic},
 };
 
 use pyo3::prelude::*;
@@ -13,7 +14,10 @@ use crate::{bridging::PyValue, stack::ArcStack};
 
 #[derive(Debug)]
 pub enum IsolateRunResult {
+    /// The script returned a transmitable (between Python and Javascript) value.
     Value(PyResult<Py<PyAny>>),
+
+    /// The script returned a resolvible promise.
     Promise(
         (
             Arc<(
@@ -23,11 +27,17 @@ pub enum IsolateRunResult {
             oneshot::Receiver<Py<PyValue>>,
         ),
     ),
-    Error(String),
+
+    /// The script threw an error.
+    Error(PyErr),
 }
 
 #[derive(Debug)]
 pub enum IsolateRequest {
+    Hello {
+        reply: oneshot::Sender<Arc<IsolateState>>,
+    },
+
     /// Run Javascript code.
     Run {
         source: String,
@@ -36,6 +46,9 @@ pub enum IsolateRequest {
 
     /// Add a runnable Python function.
     AddFn { name: String },
+
+    /// Close the isolate.
+    Close,
 }
 
 pub type IsolateTx = mpsc::UnboundedSender<IsolateRequest>;
@@ -43,15 +56,18 @@ pub type IsolateRx = mpsc::UnboundedReceiver<IsolateRequest>;
 
 #[derive(Debug)]
 pub enum PythonRequest {
-    AddFn {
-        name: String,
-        handler: Py<PyAny>,
-    },
+    /// Add a new Python function.
+    AddFn { name: String, handler: Py<PyAny> },
+
+    /// Run a Python function asynchronously.
     RunFn {
         name: String,
         args: Py<PyValue>,
-        reply: oneshot::Sender<String>,
+        reply: oneshot::Sender<ObscuredGlobal<v8::Value>>,
     },
+
+    /// Close Python-side handling.
+    Close,
 }
 
 #[repr(transparent)]
@@ -102,6 +118,7 @@ pub struct IsolateState {
     pub py_tx: PythonTx,
     pub stack: tokio::sync::Mutex<ArcStack>,
     pub ctx_scope: tokio::sync::Mutex<ObscuredContextScope>,
+    pub closed: atomic::AtomicBool,
 }
 
 impl IsolateState {
@@ -115,7 +132,33 @@ impl IsolateState {
             py_tx,
             stack: tokio::sync::Mutex::new(ArcStack::new()),
             ctx_scope: tokio::sync::Mutex::new(ObscuredContextScope::new(ctx_scope)),
+            closed: atomic::AtomicBool::new(false),
         }
+    }
+
+    #[inline(always)]
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(atomic::Ordering::SeqCst)
+    }
+
+    #[inline(always)]
+    pub async fn close(&self) {
+        self.closed.store(true, atomic::Ordering::SeqCst);
+
+        // first we close the tasks
+        {
+            self.tasks.wait().await;
+            self.tasks.close();
+        }
+
+        // then we drop the stack
+        {
+            let mut stack = self.stack.lock().await;
+            stack.drop_all();
+        }
+
+        // we don't need to care about ctx_scope at all
+        // it gets dropped eventually from the task itself
     }
 }
 
@@ -141,6 +184,18 @@ impl<T> ObscuredGlobal<T> {
     #[must_use]
     pub fn take(self, isolate: &mut Isolate) -> Global<T> {
         unsafe { Global::from_raw(isolate, self.0) }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn with<R>(&self, isolate: &mut Isolate, f: impl FnOnce(&T) -> R) -> R {
+        let glob = unsafe { Global::from_raw(isolate, self.0) };
+        let res = f(glob.open(isolate));
+
+        // v8 literally does this
+        mem::forget(glob);
+
+        res
     }
 }
 

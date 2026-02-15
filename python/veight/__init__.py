@@ -1,3 +1,3 @@
-from .veight import Isolates, Value
+from .veight import Isolate, Isolates, JsError, Value, undefined
 
-__all__ = ["Isolates", "Value"]
+__all__ = ["Isolates", "Isolate", "Value", "undefined", "JsError"]

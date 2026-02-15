@@ -36,6 +36,8 @@ jobs:
             target: s390x
           - runner: ubuntu-22.04
             target: ppc64le
+    env:
+      V8_GN_ARGS: "use_static_tls=false"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -45,7 +47,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter -- --crate-type rlib
+          args: --release --out dist --find-interpreter -- --crate-type staticlib
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
@@ -69,6 +71,7 @@ jobs:
             target: armv7
     env:
       RUSTY_V8_MIRROR: $HOME/.cache/rusty_v8
+      V8_GN_ARGS: "use_static_tls=false"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -91,7 +94,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter -- --crate-type rlib
+          args: --release --out dist --find-interpreter -- --crate-type staticlib
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       - name: Upload wheels
